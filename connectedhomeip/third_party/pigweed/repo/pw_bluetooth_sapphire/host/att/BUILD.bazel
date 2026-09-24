@@ -1,0 +1,71 @@
+# Copyright 2024 The Pigweed Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not
+# use this file except in compliance with the License. You may obtain a copy of
+# the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations under
+# the License.
+
+load("@pigweed//pw_build:pigweed.bzl", "pw_cc_test")
+load("//pw_bluetooth_sapphire/host:variables.bzl", "COPTS")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["**/*"]))
+
+cc_library(
+    name = "definitions",
+    srcs = [
+        "packet.cc",
+    ],
+    copts = COPTS,
+    deps = [
+        "//pw_bluetooth_sapphire:public",
+        "//pw_bluetooth_sapphire/host/common",
+        "//pw_bluetooth_sapphire/host/hci-spec",
+        "//pw_bluetooth_sapphire/host/l2cap:definitions",
+    ],
+)
+
+cc_library(
+    name = "att",
+    srcs = [
+        "attribute.cc",
+        "bearer.cc",
+        "database.cc",
+        "error.cc",
+        "permissions.cc",
+        "write_queue.cc",
+    ],
+    copts = ["-Wswitch-enum"] + COPTS,
+    deps = [
+        ":definitions",
+        "//pw_bluetooth_sapphire/host/l2cap",
+        "//pw_bluetooth_sapphire/host/sm:definitions",
+        "@pigweed//pw_string",
+        "@pigweed//third_party/fuchsia:fit",
+    ],
+)
+
+pw_cc_test(
+    name = "att_test",
+    srcs = [
+        "attribute_test.cc",
+        "bearer_test.cc",
+        "database_test.cc",
+        "error_test.cc",
+        "permissions_test.cc",
+    ],
+    copts = COPTS,
+    test_main = "//pw_bluetooth_sapphire/host/testing:gtest_main",
+    deps = [
+        ":att",
+        "//pw_bluetooth_sapphire/host/l2cap:testing",
+    ],
+)

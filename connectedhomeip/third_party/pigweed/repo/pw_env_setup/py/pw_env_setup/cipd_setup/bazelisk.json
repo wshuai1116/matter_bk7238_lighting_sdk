@@ -1,0 +1,21 @@
+{
+  "included_files": [
+    "buildifier.json",
+    "openjdk.json"
+  ],
+  "packages": [
+    {
+      "path": "fuchsia/third_party/bazelisk-as-bazel/${platform}",
+      "platforms": [
+        "linux-amd64",
+        "mac-amd64",
+        "mac-arm64",
+        "windows-amd64"
+      ],
+      "tags": [
+        "version:2@1.21.0"
+      ],
+      "version_file": ".versions/bazelisk-as-bazel.version"
+    }
+  ]
+}

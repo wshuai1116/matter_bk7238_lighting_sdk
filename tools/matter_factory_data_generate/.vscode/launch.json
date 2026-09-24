@@ -1,0 +1,17 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": ["generate","--cd","cd.bin","--pai","bk7231_pai.der","--dac","Chip-DAC-Cert-01.der","--dac_key","Chip-DAC-Key-01.der","--discriminator","0xfff","--iteration_count","0x3e8","--salt","U1BBS0UyUCBLZXkgU2FsdA==","--verifier","uWFwqugDNGiEck/po7KHwwMwwqZgN10XuyBajPGuyzUEV/iree4lOrao5GuwnlQ65CJzbeUB49s31EH+NEkg0JVI5MGCQGMMT/SRPFNRODm3wH/MBiehuFc6FJ/NH6Rmzw==","--pin_code","20202021","--vendor_name","BEKEN","--vendor_id","0x1342","--product_name","bk7231 On","--product_id","0x3e8","--serialnum","12345678","--mfg_date","20220130","--hardware_ver","1","--hardware_ver_str","1.01","--unique_id","00112233445566778899aabbccddeeff"]
+        }
+    ]
+}

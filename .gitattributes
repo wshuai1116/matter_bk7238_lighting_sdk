@@ -1,0 +1,5 @@
+connectedhomeip/zap/zap filter=lfs diff=lfs merge=lfs -text
+connectedhomeip/zap/zap-cli filter=lfs diff=lfs merge=lfs -text
+connectedhomeip/zap/resources/app.asar filter=lfs diff=lfs merge=lfs -text
+*.tar.bz2 filter=lfs diff=lfs merge=lfs -text
+*.a filter=lfs diff=lfs merge=lfs -text

@@ -1,0 +1,4 @@
+owner: project-chip
+repo: zap
+provider: github
+updaterCacheDirName: zap-updater

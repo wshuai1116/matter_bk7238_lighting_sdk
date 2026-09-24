@@ -1,0 +1,445 @@
+# Copyright 2020 The Pigweed Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not
+# use this file except in compliance with the License. You may obtain a copy of
+# the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations under
+# the License.
+
+load("@rules_python//python:proto.bzl", "py_proto_library")
+load("//pw_build:compatibility.bzl", "host_backend_alias")
+load(
+    "//pw_build:pigweed.bzl",
+    "pw_cc_test",
+    "pw_facade",
+)
+load("//pw_protobuf_compiler:pw_proto_library.bzl", "pw_proto_library")
+
+package(default_visibility = ["//visibility:public"])
+
+licenses(["notice"])
+
+pw_facade(
+    name = "id",
+    hdrs = [
+        "public/pw_thread/id.h",
+    ],
+    backend = ":id_backend",
+    includes = ["public"],
+)
+
+label_flag(
+    name = "id_backend",
+    build_setting_default = ":id_unspecified_backend",
+)
+
+host_backend_alias(
+    name = "id_unspecified_backend",
+    backend = "//pw_thread_stl:id",
+)
+
+cc_library(
+    name = "config",
+    hdrs = ["public/pw_thread/config.h"],
+    includes = ["public"],
+    deps = [":config_override"],
+)
+
+label_flag(
+    name = "config_override",
+    build_setting_default = "//pw_build:default_module_config",
+)
+
+cc_library(
+    name = "thread_info",
+    hdrs = ["public/pw_thread/thread_info.h"],
+    includes = ["public"],
+    deps = ["//pw_span"],
+)
+
+pw_facade(
+    name = "thread_iteration",
+    hdrs = [
+        "public/pw_thread/thread_iteration.h",
+    ],
+    backend = ":iteration_backend",
+    includes = ["public"],
+    deps = [
+        ":thread_info",
+        "//pw_function",
+        "//pw_status",
+    ],
+)
+
+label_flag(
+    name = "iteration_backend",
+    build_setting_default = ":iteration_unspecified_backend",
+)
+
+host_backend_alias(
+    name = "iteration_unspecified_backend",
+    backend = "//pw_thread_stl:thread_iteration",
+)
+
+pw_facade(
+    name = "sleep",
+    srcs = [
+        "sleep.cc",
+    ],
+    hdrs = [
+        "public/pw_thread/sleep.h",
+    ],
+    backend = ":sleep_backend",
+    implementation_deps = [
+        ":id",
+    ],
+    includes = ["public"],
+    deps = [
+        "//pw_chrono:system_clock",
+        "//pw_preprocessor",
+    ],
+)
+
+label_flag(
+    name = "sleep_backend",
+    build_setting_default = ":sleep_unspecified_backend",
+)
+
+host_backend_alias(
+    name = "sleep_unspecified_backend",
+    backend = "//pw_thread_stl:sleep",
+)
+
+pw_facade(
+    name = "thread",
+    srcs = [
+        "public/pw_thread/config.h",
+        "thread.cc",
+    ],
+    hdrs = [
+        "public/pw_thread/detached_thread.h",
+        "public/pw_thread/thread.h",
+    ],
+    backend = ":thread_backend",
+    includes = ["public"],
+    deps = [
+        ":id",
+        ":options",
+        ":thread_core",
+        "//pw_function",
+    ],
+)
+
+cc_library(
+    name = "options",
+    hdrs = ["public/pw_thread/options.h"],
+    includes = ["public"],
+)
+
+label_flag(
+    name = "thread_backend",
+    build_setting_default = ":thread_unspecified_backend",
+)
+
+host_backend_alias(
+    name = "thread_unspecified_backend",
+    backend = "//pw_thread_stl:thread",
+)
+
+cc_library(
+    name = "deprecated_or_new_thread_function",
+    hdrs = ["public/pw_thread/deprecated_or_new_thread_function.h"],
+    includes = ["public"],
+    deps = [
+        "//pw_function",
+    ],
+)
+
+pw_cc_test(
+    name = "deprecated_or_new_thread_function_test",
+    srcs = [
+        "deprecated_or_new_thread_function_test.cc",
+    ],
+    deps = [
+        ":deprecated_or_new_thread_function",
+    ],
+)
+
+cc_library(
+    name = "thread_core",
+    hdrs = [
+        "public/pw_thread/thread_core.h",
+    ],
+    includes = ["public"],
+    deps = [
+        "//pw_log",
+        "//pw_status",
+    ],
+)
+
+cc_library(
+    name = "thread_snapshot_service",
+    srcs = [
+        "pw_thread_private/thread_snapshot_service.h",
+        "thread_snapshot_service.cc",
+    ],
+    hdrs = ["public/pw_thread/thread_snapshot_service.h"],
+    includes = ["public"],
+    deps = [
+        "//pw_protobuf",
+        "//pw_rpc/raw:server_api",
+        "//pw_span",
+        "//pw_status",
+        ":config",
+        ":thread_cc.pwpb",
+        ":thread_info",
+        ":thread_iteration",
+        ":thread_snapshot_service_cc.pwpb",
+        ":thread_snapshot_service_cc.raw_rpc",
+        # TODO(amontanez): This should depend on FreeRTOS but our third parties
+        # currently do not have Bazel support.
+    ],
+)
+
+pw_facade(
+    name = "test_thread_context",
+    hdrs = [
+        "public/pw_thread/test_thread_context.h",
+    ],
+    backend = ":test_thread_context_backend",
+    includes = ["public"],
+)
+
+label_flag(
+    name = "test_thread_context_backend",
+    build_setting_default = ":test_thread_context_unspecified_backend",
+)
+
+host_backend_alias(
+    name = "test_thread_context_unspecified_backend",
+    backend = "//pw_thread_stl:test_thread_context",
+)
+
+pw_facade(
+    name = "yield",
+    srcs = [
+        "yield.cc",
+    ],
+    hdrs = [
+        "public/pw_thread/yield.h",
+    ],
+    backend = ":yield_backend",
+    implementation_deps = [
+        ":id",
+    ],
+    includes = ["public"],
+    deps = [
+        "//pw_preprocessor",
+    ],
+)
+
+label_flag(
+    name = "yield_backend",
+    build_setting_default = ":yield_unspecified_backend",
+)
+
+host_backend_alias(
+    name = "yield_unspecified_backend",
+    backend = "//pw_thread_stl:yield",
+)
+
+cc_library(
+    name = "snapshot",
+    srcs = [
+        "snapshot.cc",
+    ],
+    hdrs = [
+        "public/pw_thread/snapshot.h",
+    ],
+    deps = [
+        ":thread",
+        ":thread_cc.pwpb",
+        "//pw_bytes",
+        "//pw_function",
+        "//pw_log",
+        "//pw_protobuf",
+        "//pw_status",
+    ],
+)
+
+cc_library(
+    name = "non_portable_test_thread_options",
+    hdrs = [
+        "public/pw_thread/non_portable_test_thread_options.h",
+    ],
+    deps = [
+        ":thread",
+    ],
+)
+
+# To instantiate this as a pw_cc_test, depend on this pw_cc_library and the
+# pw_cc_library which implements the backend for non_portable_test_thread_options. See
+# //pw_thread_stl:thread_backend_test as an example.
+cc_library(
+    name = "thread_facade_test",
+    testonly = True,
+    srcs = [
+        "thread_facade_test.cc",
+    ],
+    deps = [
+        ":id",
+        ":non_portable_test_thread_options",
+        ":thread",
+        "//pw_chrono:system_clock",
+        "//pw_sync:binary_semaphore",
+        "//pw_unit_test",
+    ],
+    alwayslink = True,
+)
+
+pw_cc_test(
+    name = "test_thread_context_facade_test",
+    srcs = [
+        "test_thread_context_facade_test.cc",
+    ],
+    # TODO: b/317922402 - On Windows, this test can easily hang indefinitely.
+    # Disable on Windows until we can test with the native Windows SDK libraries
+    # for threading.
+    # TODO: b/361369192 - This test behaves unusually on rp2.
+    target_compatible_with = select({
+        "@pico-sdk//bazel/constraint:rp2040": ["@platforms//:incompatible"],
+        "@pico-sdk//bazel/constraint:rp2350": ["@platforms//:incompatible"],
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":test_thread_context",
+        ":thread",
+        "//pw_sync:binary_semaphore",
+        "//pw_unit_test",
+    ],
+)
+
+pw_cc_test(
+    name = "id_facade_test",
+    srcs = [
+        "id_facade_test.cc",
+    ],
+    deps = [
+        ":id",
+        "//pw_unit_test",
+    ],
+)
+
+pw_cc_test(
+    name = "options_test",
+    srcs = ["options_test.cc"],
+    deps = [
+        ":options",
+        "//pw_compilation_testing:negative_compilation_testing",
+    ],
+)
+
+pw_cc_test(
+    name = "sleep_facade_test",
+    srcs = [
+        "sleep_facade_test.cc",
+        "sleep_facade_test_c.c",
+    ],
+    deps = [
+        ":id",
+        ":sleep",
+        "//pw_chrono:system_clock",
+        "//pw_preprocessor",
+        "//pw_unit_test",
+    ],
+)
+
+pw_cc_test(
+    name = "thread_info_test",
+    srcs = [
+        "thread_info_test.cc",
+    ],
+    deps = [
+        ":thread_info",
+        "//pw_span",
+    ],
+)
+
+pw_cc_test(
+    name = "thread_snapshot_service_test",
+    srcs = [
+        "pw_thread_private/thread_snapshot_service.h",
+        "thread_snapshot_service_test.cc",
+    ],
+    # TODO: https://pwbug.dev/342662853 - This test fails under ASAN.
+    tags = ["noasan"],
+    deps = [
+        ":thread_cc.pwpb",
+        ":thread_info",
+        ":thread_iteration",
+        ":thread_snapshot_service",
+        ":thread_snapshot_service_cc.pwpb",
+        "//pw_protobuf",
+        "//pw_span",
+        "//pw_sync:thread_notification",
+    ],
+)
+
+pw_cc_test(
+    name = "yield_facade_test",
+    srcs = [
+        "yield_facade_test.cc",
+        "yield_facade_test_c.c",
+    ],
+    deps = [
+        ":id",
+        ":yield",
+        "//pw_preprocessor",
+        "//pw_unit_test",
+    ],
+)
+
+proto_library(
+    name = "thread_proto",
+    srcs = ["pw_thread_protos/thread.proto"],
+    strip_import_prefix = "/pw_thread",
+    deps = [
+        "//pw_tokenizer:tokenizer_proto",
+    ],
+)
+
+py_proto_library(
+    name = "thread_proto_py_pb2",
+    deps = [":thread_proto"],
+)
+
+proto_library(
+    name = "thread_snapshot_service_proto",
+    srcs = ["pw_thread_protos/thread_snapshot_service.proto"],
+    strip_import_prefix = "/pw_thread",
+    deps = [
+        ":thread_proto",
+    ],
+)
+
+pw_proto_library(
+    name = "thread_snapshot_service_cc",
+    deps = [":thread_snapshot_service_proto"],
+)
+
+py_proto_library(
+    name = "thread_snapshot_service_py_pb2",
+    deps = [":thread_snapshot_service_proto"],
+)
+
+pw_proto_library(
+    name = "thread_cc",
+    deps = [":thread_proto"],
+)
