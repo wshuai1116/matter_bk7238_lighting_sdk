@@ -179,6 +179,12 @@ private:
 #if CHIP_ENABLE_ADDITIONAL_DATA_ADVERTISING
     void HandleC3CharRead(void * param);
 #endif
+
+public:
+    // 未配网或最后一个 Fabric 已删除时调用。
+    // 配网线程仍在时只清“已配网”标记，避免关广播时把线程退掉。
+    // 线程已经退出并交给遥控器主机后，恢复 CHIPoBLE 的服务、GATT 和广播状态。
+    void RestartForCommissioning(void);
 };
 
 /**

@@ -9,6 +9,7 @@
 #include <app/server/AppDelegate.h>
 #include <app/server/OnboardingCodesUtil.h>
 #include <app/server/Server.h>
+#include <platform/Beken/BLEManagerImpl.h>
 #include <platform/CHIPDeviceLayer.h>
 #include <platform/KeyValueStoreManager.h>
 #include <platform/PlatformManager.h>
@@ -78,6 +79,7 @@ extern "C" void remote_light_toggle(void);
 void PairingWindowTimeout(chip::System::Layer *, void *);
 void StartCommissioningWindowHandler(chip::System::Layer *, void *);
 void IndicatorOnlyTimeout(chip::System::Layer *, void *);
+void ReopenCommissioningAfterLastFabricRemoved(intptr_t);
 void ExitPhoneCommissioningMode(const char * reason);
 void ResumeRemoteReceive(const char * reason);
 void StartPairingWindowSoftAP();
@@ -247,6 +249,20 @@ public:
         ChipLogProgress(DeviceLayer, "Fabric committed while trigger=%s active=%d", sPhoneCommissioningTrigger,
                         sPhoneCommissioningActive ? 1 : 0);
     }
+
+    void OnFabricRemoved(const FabricTable & fabricTable, FabricIndex fabricIndex) override
+    {
+        // 长按/上电进入配网时会自己删 Fabric，此时窗口已经在打开，不能再嵌套进来。
+        if (sPhoneCommissioningActive || fabricTable.FabricCount() != 0)
+        {
+            return;
+        }
+
+        ChipLogProgress(DeviceLayer, "Last fabric 0x%x removed, scheduling commissioning window",
+                        static_cast<unsigned>(fabricIndex));
+        // RemoveFabric 的响应还要靠当前会话发出，等这条命令返回后再开广播。
+        DeviceLayer::PlatformMgr().ScheduleWork(ReopenCommissioningAfterLastFabricRemoved, 0);
+    }
 };
 
 LightingFabricDelegate sFabricDelegate;
@@ -264,6 +280,25 @@ void StopRemoteScan()
     // 立即停扫并强制结束当前扫描过程。
     ql_ble_remote_set_scan_enable(0);
     ql_ble_remote_force_stop_scan();
+}
+
+void ReopenCommissioningAfterLastFabricRemoved(intptr_t)
+{
+    if (sPhoneCommissioningActive)
+    {
+        return;
+    }
+    if (Server::GetInstance().GetFabricTable().FabricCount() != 0)
+    {
+        return;
+    }
+
+    ChipLogProgress(DeviceLayer, "Last fabric removed, reopening commissioning window");
+    // 先停遥控器主机，再把控制器交回 CHIPoBLE，最后走现有的手机配网窗口。
+    StopRemoteScan();
+    ql_ble_remote_set_suspend(1);
+    DeviceLayer::Internal::BLEMgrImpl().RestartForCommissioning();
+    EnterPhoneCommissioningMode("last-fabric-removed");
 }
 
 void LoadRemotePairs()
@@ -515,6 +550,11 @@ extern "C" void LightingRemoteInit(void)
     auto & server = Server::GetInstance();
     server.GetCommissioningWindowManager().SetAppDelegate(&sCommissioningDelegate);
     server.GetFabricTable().AddFabricDelegate(&sFabricDelegate);
+    if (server.GetFabricTable().FabricCount() == 0)
+    {
+        // 解除配网不会清 wifi-ssid。不先清已配网标记的话，下面关窗会把 BLE 线程退掉。
+        DeviceLayer::Internal::BLEMgrImpl().RestartForCommissioning();
+    }
     if (server.GetCommissioningWindowManager().IsCommissioningWindowOpen())
     {
         server.GetCommissioningWindowManager().CloseCommissioningWindow();
@@ -523,6 +563,13 @@ extern "C" void LightingRemoteInit(void)
     if (enterPhoneCommissioningByBootCycle)
     {
         EnterPhoneCommissioningMode("boot-cycle");
+    }
+    else if (server.GetFabricTable().FabricCount() == 0)
+    {
+        // 未配网（新烧录或 matter_factory_reset 之后）直接打开配网窗口。
+        // 云端写入的工厂 uniqueId 在这次广播里通过 C3 读出。已配网设备仍不广播。
+        ChipLogProgress(DeviceLayer, "No fabric on boot, opening commissioning window for BLE scan");
+        EnterPhoneCommissioningMode("uncommissioned-boot");
     }
     else
     {

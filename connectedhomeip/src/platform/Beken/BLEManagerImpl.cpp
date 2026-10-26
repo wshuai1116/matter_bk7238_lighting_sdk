@@ -30,6 +30,8 @@
 #include <platform/DeviceInstanceInfoProvider.h>
 #include <platform/internal/CHIPDeviceLayerInternal.h>
 #include <setup_payload/AdditionalDataPayload.h>
+#include "BekenRdi.h"
+#include "bk7238_rdi_native.h"
 #include <setup_payload/AdditionalDataPayloadGenerator.h>
 #include <setup_payload/QRCodeSetupPayloadGenerator.h>
 #include <mbedtls/gcm.h>
@@ -61,6 +63,7 @@ extern "C" void ql_ble_remote_notice_cb(ble_notice_t notice, void * param) __att
 #if CFG_BLE_USE_DYN_RAM
 extern "C" void ble_thread_exit(void);
 #endif
+extern "C" void ble_entry(void);
 
 /*******************************************************************************
  * Local data types
@@ -304,7 +307,7 @@ bk_attm_desc_t svr_fff6_att_db[SVR_FFF6_MAX] = {
     [SVR_FFF6_TX_VALUE] = { ChipUUID_CHIPoBLECharact_TX, PROP(RD)| PROP(I)|ATT_UUID(128), 512|OPT(NO_OFFSET) },
     [SVR_FFF6_TX_CFG] = { BEKEN_ATT_DESC_CLIENT_CHAR_CFG_128, PROP(RD)| PROP(WR), 2|OPT(NO_OFFSET) },
 #if CHIP_ENABLE_ADDITIONAL_DATA_ADVERTISING
-    [SVR_FFF6_C3_DECL] = { BEKEN_ATT_DECL_CHARACTERISTIC_128, PROP(RD)| PROP(N), 0 },
+    [SVR_FFF6_C3_DECL] = { BEKEN_ATT_DECL_CHARACTERISTIC_128, PROP(RD), 0 },
     [SVR_FFF6_C3_VALUE] = { UUID_CHIPoBLEChar_C3, PROP(RD)|ATT_UUID(128), 512 },
 #endif
 };
@@ -373,14 +376,7 @@ CHIP_ERROR BLEManagerImpl::_Init()
     }
     PlatformMgr().ScheduleWork(DriveBLEState, 0);
 
-#if CHIP_ENABLE_ADDITIONAL_DATA_ADVERTISING
-    // Prepare C3 private payload once to keep BLE read callback stack usage low.
-    err = PrepareC3PrivatePayloadCache();
-    if (err != CHIP_NO_ERROR)
-    {
-        ChipLogError(DeviceLayer, "PrepareC3PrivatePayloadCache failed: %" CHIP_ERROR_FORMAT, err.Format());
-    }
-#endif
+
 
     return CHIP_NO_ERROR;
 }
@@ -806,6 +802,42 @@ extern "C" void ql_ble_remote_reset_ble_state(void);
 extern "C" void ql_ble_remote_set_suspend(int enable);
 extern "C" void ql_ble_remote_set_scan_enable(int enable);
 extern "C" void ql_ble_remote_install_notice_cb(void);
+
+void BLEManagerImpl::RestartForCommissioning(void)
+{
+    // 残留的 wifi-ssid 会在初始化时置上 kDeviceCommissioned。
+    // 没有 Fabric 时这个标记必须清掉，否则关广播会走进 ble thread exit。
+    mFlags.Clear(Flags::kDeviceCommissioned);
+
+    if (mServiceMode == ConnectivityManager::kCHIPoBLEServiceMode_Enabled)
+    {
+        ChipLogProgress(DeviceLayer, "CHIPoBLE already enabled, keep stack for commissioning");
+        return;
+    }
+
+    ChipLogProgress(DeviceLayer, "CHIPoBLE service was stopped, restoring peripheral for commissioning");
+    mServiceMode = ConnectivityManager::kCHIPoBLEServiceMode_Enabled;
+    mAdvertisingMode = ConnectivityManager::kFastAdvertising;
+    adv_actv_idx = kUnusedIndex;
+    memset(mBleConnections, 0, sizeof(mBleConnections));
+
+    mFlags.Clear(Flags::kDeviceConnected);
+    mFlags.Clear(Flags::kBekenBLESGATTSReady);
+    mFlags.Clear(Flags::kBEKENBLEADVCreate);
+    mFlags.Clear(Flags::kBEKENBLEADVSetData);
+    mFlags.Clear(Flags::kBEKENBLEADVSetRsp);
+    mFlags.Clear(Flags::kBEKENBLEADVStarted);
+    mFlags.Clear(Flags::kBEKENBLEAdvTimerRun);
+    mFlags.Clear(Flags::kAdvertisingRefreshNeeded);
+    mFlags.Clear(Flags::kAdvertisingEnabled);
+    mFlags.Clear(Flags::kDeviceNameDefSet);
+
+    // 遥控器主机启动时换过 notice 回调，并在线程退出后重新 ble_entry。
+    // 广播命令完成和连接事件都要回到 CHIPoBLE。
+    ble_set_notice_cb(ble_event_notice);
+    ble_entry();
+}
+
 void BLEManagerImpl::DriveBLEState(void)
 {
     CHIP_ERROR err = CHIP_NO_ERROR;
@@ -954,6 +986,10 @@ void BLEManagerImpl::DriveBLEState(void)
         // must disconnect before start
         if (!mFlags.Has(Flags::kBEKENBLEADVStarted))
         {
+#if CHIP_ENABLE_ADDITIONAL_DATA_ADVERTISING
+            err = PrepareBekenRdiPayload();
+            SuccessOrExit(err);
+#endif
             ChipLogProgress(DeviceLayer, "start advertising...");
             ChipLogDetail(DeviceLayer, "adv_actv_idx=%d, duration=%d", adv_actv_idx, 0);
             err = MapBLEError(bk_ble_start_advertising(adv_actv_idx, 0, beken_ble_cmd_cb)); // BLE_START_ADV
@@ -1207,70 +1243,9 @@ void BLEManagerImpl::beken_ble_cmd_cb(ble_cmd_t cmd, ble_cmd_param_t * param)
 #if CHIP_ENABLE_ADDITIONAL_DATA_ADVERTISING
 void BLEManagerImpl::HandleC3CharRead(void * param)
 {
-    CHIP_ERROR err = CHIP_NO_ERROR;
-    chip::System::PacketBufferHandle bufferHandle;
-    chip::System::PacketBufferTLVWriter writer;
-    chip::TLV::TLVWriter innerWriter;
-    read_req_t * r_req = (read_req_t *) param;
-    chip::System::PacketBufferHandle tempBuffer = chip::System::PacketBufferHandle::New(chip::System::PacketBuffer::kMaxSize);
-
-#if CHIP_ENABLE_ROTATING_DEVICE_ID && defined(CHIP_DEVICE_CONFIG_ROTATING_DEVICE_ID_UNIQUE_ID)
-    AdditionalDataPayloadGeneratorParams additionalDataPayloadParams;
-    uint8_t rotatingDeviceIdUniqueId[ConfigurationManager::kRotatingDeviceIDUniqueIDLength] = {};
-    MutableByteSpan rotatingDeviceIdUniqueIdSpan(rotatingDeviceIdUniqueId);
-    uint8_t rotatingDeviceIdInternalBuffer[RotatingDeviceId::kMaxLength];
-    MutableByteSpan rotatingDeviceIdBuffer(rotatingDeviceIdInternalBuffer);
-#endif
-
-    VerifyOrExit(!tempBuffer.IsNull(), err = CHIP_ERROR_NO_MEMORY);
-    writer.Init(std::move(tempBuffer));
-
-    if (r_req->value == NULL)
-    {
-        ChipLogError(DeviceLayer, "param->value == NULL");
-        return;
-    }
-
-    err = writer.OpenContainer(chip::TLV::AnonymousTag(), chip::TLV::kTLVType_Structure, innerWriter);
-    SuccessOrExit(err);
-
-#if CHIP_ENABLE_ROTATING_DEVICE_ID && defined(CHIP_DEVICE_CONFIG_ROTATING_DEVICE_ID_UNIQUE_ID)
-    err = DeviceLayer::GetDeviceInstanceInfoProvider()->GetRotatingDeviceIdUniqueId(rotatingDeviceIdUniqueIdSpan);
-    SuccessOrExit(err);
-    err = ConfigurationMgr().GetLifetimeCounter(additionalDataPayloadParams.rotatingDeviceIdLifetimeCounter);
-    SuccessOrExit(err);
-    additionalDataPayloadParams.rotatingDeviceIdUniqueId = rotatingDeviceIdUniqueIdSpan;
-    err = AdditionalDataPayloadGenerator().generateRotatingDeviceIdAsBinary(additionalDataPayloadParams, rotatingDeviceIdBuffer);
-    SuccessOrExit(err);
-
-    err = innerWriter.Put(chip::TLV::ContextTag(chip::SetupPayloadData::kRotatingDeviceIdTag), rotatingDeviceIdBuffer);
-    SuccessOrExit(err);
-#endif /* CHIP_ENABLE_ROTATING_DEVICE_ID */
-
-    if (sC3PrivatePayloadReady)
-    {
-        err = innerWriter.Put(chip::TLV::ContextTag(kAdditionalDataPrivateTag),
-                              chip::ByteSpan(sC3EncryptedPrivatePayload, sC3EncryptedPrivatePayloadLen));
-        SuccessOrExit(err);
-    }
-    else
-    {
-        ChipLogError(DeviceLayer, "C3 private payload cache not ready, skip private tag this read");
-    }
-
-    err = writer.CloseContainer(innerWriter);
-    SuccessOrExit(err);
-    err = writer.Finalize(&bufferHandle);
-    SuccessOrExit(err);
-
-    memcpy(r_req->value, bufferHandle->Start(), bufferHandle->DataLength());
-    r_req->length = bufferHandle->DataLength();
-exit:
-    if (err != CHIP_NO_ERROR)
-    {
-        ChipLogError(DeviceLayer, "Failed to generate TLV encoded Additional Data");
-    }
-    return;
+    read_req_t * request = static_cast<read_req_t *>(param);
+    if (bk_rdi_native_copy(request) != BK_RDI_OK)
+        ChipLogError(DeviceLayer, "C3 RDI payload unavailable");
 }
 #endif
 
