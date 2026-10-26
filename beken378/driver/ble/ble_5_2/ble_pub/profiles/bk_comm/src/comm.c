@@ -23,51 +23,43 @@ void comm_event_sent(uint8_t conidx,uint8_t user_lid,uint16_t dummy,uint16_t sta
 	}
 }
 
-static void comm_cb_att_read_get(uint8_t conidx,uint8_t user_lid,uint16_t token,uint16_t hdl,uint16_t offset,
-									uint16_t max_length)
+/* Replacement for the inspected legacy BK7238 BLE 5.2 read callback. */
+static void comm_cb_att_read_get(uint8_t conidx, uint8_t user_lid, uint16_t token,
+                                 uint16_t hdl, uint16_t offset, uint16_t max_length)
 {
-	struct bk_ble_env_tag *ble_env = NULL;
-	common_buf_t *p_buf = NULL;
-
-	read_req_t read_req;
-	uint16_t status = GAP_ERR_NO_ERROR;
-
-	// retrieve handle information
-	prf_data_t *prf_data = prf_data_get_by_prf_handler(hdl);
-
-	if (prf_data) {
-		// retrieve handle information
-		ble_env = (struct bk_ble_env_tag*)(prf_data->p_env);
-
-		read_req.conn_idx = app_ble_find_conn_idx_handle(conidx);
-		read_req.value = kernel_malloc(BLE_CHAR_DATA_LEN, KERNEL_MEM_KERNEL_MSG);
-		read_req.size = BLE_CHAR_DATA_LEN;
-		read_req.att_idx = hdl - ble_env->start_hdl;
-		read_req.prf_id = ble_env->id;
-
-		if (ble_event_notice)
-			ble_event_notice(BLE_5_READ_EVENT,&read_req);
-
-		status = common_buf_alloc(&p_buf,GATT_BUFFER_HEADER_LEN,read_req.length,GATT_BUFFER_TAIL_LEN);
-
-		if(status == GAP_ERR_NO_ERROR) {
-			common_buf_copy_data_from_mem(p_buf,read_req.value,read_req.length);
-		} else {
-			status = ATT_ERR_INSUFF_RESOURCE;
-			kernel_free(read_req.value);
-		}
-	} else {
-		status = ATT_ERR_INVALID_HANDLE;
-	}
-
-	if (p_buf) {
-		gatt_srv_att_read_get_cfm(conidx,user_lid,token,status,p_buf->data_len,p_buf);
-		kernel_free(read_req.value);
-		common_buf_release(p_buf);
-	} else {
-		bk_printf("[%s]status:%d\r\n",__func__,status);
-	}
+    struct bk_ble_env_tag *ble_env = NULL;
+    common_buf_t *p_buf = NULL;
+    read_req_t read_req;
+    uint16_t status = GAP_ERR_NO_ERROR;
+    uint16_t total_length = 0, slice_length = 0;
+    prf_data_t *prf_data = prf_data_get_by_prf_handler(hdl);
+    memset(&read_req, 0, sizeof(read_req));
+    if (!prf_data) { status = ATT_ERR_INVALID_HANDLE; goto done; }
+    ble_env = (struct bk_ble_env_tag *)prf_data->p_env;
+    read_req.conn_idx = app_ble_find_conn_idx_handle(conidx);
+    read_req.value = kernel_malloc(BLE_CHAR_DATA_LEN, KERNEL_MEM_KERNEL_MSG);
+    read_req.size = BLE_CHAR_DATA_LEN;
+    read_req.att_idx = hdl - ble_env->start_hdl;
+    read_req.prf_id = ble_env->id;
+    if (!read_req.value) { status = ATT_ERR_INSUFF_RESOURCE; goto done; }
+    if (ble_event_notice) ble_event_notice(BLE_5_READ_EVENT, &read_req);
+    if (read_req.length > read_req.size) { status = 0x0D; goto done; }
+    total_length = read_req.length;
+    if (offset > total_length) { status = 0x07; goto done; }
+    slice_length = total_length - offset;
+    if (slice_length > max_length) slice_length = max_length;
+    status = common_buf_alloc(&p_buf, GATT_BUFFER_HEADER_LEN, slice_length, GATT_BUFFER_TAIL_LEN);
+    if (status != GAP_ERR_NO_ERROR || !p_buf) { status = ATT_ERR_INSUFF_RESOURCE; goto done; }
+    if (slice_length) common_buf_copy_data_from_mem(p_buf, read_req.value + offset, slice_length);
+done:
+    /* att_length is the FULL attribute length, while p_buf holds this slice.
+     * Always confirm errors too: a silent failure would leave the client waiting. */
+    gatt_srv_att_read_get_cfm(conidx, user_lid, token, status,
+                             status == GAP_ERR_NO_ERROR ? total_length : 0, p_buf);
+    if (read_req.value) kernel_free(read_req.value);
+    if (p_buf) common_buf_release(p_buf);
 }
+
 
 void comm_att_event_get(uint8_t conidx,uint8_t user_lid,uint16_t token,uint16_t dummy,uint16_t hdl,
 						uint16_t max_length)

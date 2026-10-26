@@ -15,6 +15,7 @@
  *    limitations under the License.
  */
 
+#include "DeviceIdentity.h"
 #include <credentials/CHIPCert.h>
 #include <crypto/CHIPCryptoPAL.h>
 #include <crypto/DefaultSessionKeystore.h>
@@ -47,83 +48,54 @@ CHIP_ERROR LoadKeypairFromRaw(ByteSpan private_key, ByteSpan public_key, Crypto:
     return keypair.Deserialize(serialized_keypair);
 }
 
+// Factory V2 pages produced by the batch tool: fixed offset/length tables.
+static bool ValidBatchFactoryItems(const void *header, size_t size)
+{
+    const uint8_t *bytes = static_cast<const uint8_t *>(header);
+    for (size_t i = 8; i < size; i += 8) {
+        uint32_t offset, length;
+        memcpy(&offset, bytes + i, 4);
+        memcpy(&length, bytes + i + 4, 4);
+        if (offset > 0x1000 - size || length > 0x1000 - size - offset) return false;
+    }
+    return true;
+}
+
 CHIP_ERROR FactoryDataProvider::ReadCertDataHeader()
 {
-    if(mCertDataHeader.magic_code != 0)
-        return CHIP_NO_ERROR;
-    ReturnErrorCodeIf(
-            kNoErr != bk_flash_read(
-                BK_PARTITION_MATTER_FACTORY_FLASH,
-                certDataHeaderOffset,
-                (uint8_t*)&mCertDataHeader,
-                8),
-            CHIP_ERROR_READ_FAILED);
-    uint32_t header_length = mCertDataHeader.header_length;
-    if(header_length > sizeof(mCertDataHeader))
-    {
-        header_length = sizeof(mCertDataHeader);
-    }
-    if(mCertDataHeader.magic_code < 0xF5F50000)
-    {
-        mCertDataHeader.magic_code = 0;
-        return CHIP_ERROR_READ_FAILED;
-    }
-    if(kNoErr != bk_flash_read(
-                BK_PARTITION_MATTER_FACTORY_FLASH,
-                certDataHeaderOffset,
-                (uint8_t*)&mCertDataHeader,
-                header_length))
-    {
-        mCertDataHeader.magic_code = 0;
-        return CHIP_ERROR_READ_FAILED;
-    }
+    if (mCertDataHeader.magic_code == 0xF5F50000) return CHIP_NO_ERROR;
+    decltype(mCertDataHeader) header = {};
+    ReturnErrorCodeIf(kNoErr != bk_flash_read(BK_PARTITION_MATTER_FACTORY_FLASH,
+        certDataHeaderOffset, reinterpret_cast<uint8_t *>(&header), sizeof(header)), CHIP_ERROR_READ_FAILED);
+    VerifyOrReturnError(header.magic_code == 0xF5F50000 && header.header_length == sizeof(header) &&
+        ValidBatchFactoryItems(&header, sizeof(header)), CHIP_ERROR_INVALID_ARGUMENT);
+    VerifyOrReturnError(header.DeviceAttestationCert.length > 0 &&
+        header.ProductAttestationIntermediateCert.length > 0 &&
+        header.DacPrivateKey.length == 32 && header.DacPublicKey.length == 65,
+        CHIP_ERROR_INVALID_ARGUMENT);
+    mCertDataHeader = header;
     return CHIP_NO_ERROR;
 }
+
 CHIP_ERROR FactoryDataProvider::ReadFlashDataHeader()
 {
-    if(mFlashDataHeader.magic_code != 0)
-        return CHIP_NO_ERROR;
-    ReturnErrorCodeIf(
-            kNoErr != bk_flash_read(
-                BK_PARTITION_MATTER_FACTORY_FLASH,
-                flashDataHeaderOffset,
-                (uint8_t*)&mFlashDataHeader,
-                8),
-            CHIP_ERROR_READ_FAILED);
-    uint32_t header_length = mFlashDataHeader.header_length;
-    if(header_length > sizeof(mFlashDataHeader))
-    {
-        header_length = sizeof(mFlashDataHeader);
-    }
-    if(mFlashDataHeader.magic_code < 0xF5F50000)
-    {
-        mFlashDataHeader.magic_code = 0;
-        return CHIP_ERROR_READ_FAILED;
-    }
-    if(kNoErr != bk_flash_read(
-                BK_PARTITION_MATTER_FACTORY_FLASH,
-                flashDataHeaderOffset,
-                (uint8_t*)&mFlashDataHeader,
-                header_length))
-    {
-        mFlashDataHeader.magic_code = 0;
-        return CHIP_ERROR_READ_FAILED;
-    }
+    if (mFlashDataHeader.magic_code == 0xF5F50000) return CHIP_NO_ERROR;
+    decltype(mFlashDataHeader) header = {};
+    ReturnErrorCodeIf(kNoErr != bk_flash_read(BK_PARTITION_MATTER_FACTORY_FLASH,
+        flashDataHeaderOffset, reinterpret_cast<uint8_t *>(&header), sizeof(header)), CHIP_ERROR_READ_FAILED);
+    VerifyOrReturnError(header.magic_code == 0xF5F50000 && header.header_length == sizeof(header) &&
+        ValidBatchFactoryItems(&header, sizeof(header)), CHIP_ERROR_INVALID_ARGUMENT);
+    VerifyOrReturnError(header.SetupDiscriminator.length == 2 && header.Spake2pIterationCount.length == 4 &&
+        header.SetupPasscode.length == 4 && header.VendorId.length == 2 && header.ProductId.length == 2 &&
+        header.HardwareVersion.length == 2 && header.ManufacturingDate.length == 4 &&
+        header.RotatingDeviceIdUniqueId.length == 16, CHIP_ERROR_INVALID_ARGUMENT);
+    mFlashDataHeader = header;
     return CHIP_NO_ERROR;
 }
+
 CHIP_ERROR FactoryDataProvider::GetCertificationDeclaration(MutableByteSpan & outBuffer)
 {
-    ReturnErrorOnFailure(ReadCertDataHeader());
-    ReturnErrorCodeIf(outBuffer.size() < mCertDataHeader.CertificationDeclaration.length, CHIP_ERROR_BUFFER_TOO_SMALL);
-    ReturnErrorCodeIf(
-            kNoErr != bk_flash_read(
-                BK_PARTITION_MATTER_FACTORY_FLASH,
-                certDataHeaderOffset + mCertDataHeader.CertificationDeclaration.off_set + mCertDataHeader.header_length,
-                outBuffer.data(),
-                mCertDataHeader.CertificationDeclaration.length),
-            CHIP_ERROR_READ_FAILED);
-    outBuffer.reduce_size(mCertDataHeader.CertificationDeclaration.length);
-    return CHIP_NO_ERROR;
+    return IdentityCertificate(0, outBuffer);
 }
 
 CHIP_ERROR FactoryDataProvider::GetFirmwareInformation(MutableByteSpan & out_firmware_info_buffer)
@@ -136,87 +108,17 @@ CHIP_ERROR FactoryDataProvider::GetFirmwareInformation(MutableByteSpan & out_fir
 
 CHIP_ERROR FactoryDataProvider::GetDeviceAttestationCert(MutableByteSpan & outBuffer)
 {
-    ReturnErrorOnFailure(ReadCertDataHeader());
-    ReturnErrorCodeIf(outBuffer.size() < mCertDataHeader.DeviceAttestationCert.length, CHIP_ERROR_BUFFER_TOO_SMALL);
-    ReturnErrorCodeIf(
-            kNoErr != bk_flash_read(
-                BK_PARTITION_MATTER_FACTORY_FLASH,
-                certDataHeaderOffset + mCertDataHeader.DeviceAttestationCert.off_set + mCertDataHeader.header_length,
-                outBuffer.data(),
-                mCertDataHeader.DeviceAttestationCert.length
-                ),
-            CHIP_ERROR_READ_FAILED);
-    outBuffer.reduce_size(mCertDataHeader.DeviceAttestationCert.length);
-    return CHIP_NO_ERROR;
+    return IdentityCertificate(1, outBuffer);
 }
 
 CHIP_ERROR FactoryDataProvider::GetProductAttestationIntermediateCert(MutableByteSpan & outBuffer)
 {
-    ReturnErrorOnFailure(ReadCertDataHeader());
-    ReturnErrorCodeIf(outBuffer.size() < mCertDataHeader.ProductAttestationIntermediateCert.length, CHIP_ERROR_BUFFER_TOO_SMALL);
-    ReturnErrorCodeIf(
-            kNoErr != bk_flash_read(
-                BK_PARTITION_MATTER_FACTORY_FLASH,
-                certDataHeaderOffset + mCertDataHeader.ProductAttestationIntermediateCert.off_set + mCertDataHeader.header_length,
-                outBuffer.data(),
-                mCertDataHeader.ProductAttestationIntermediateCert.length
-                ),
-            CHIP_ERROR_READ_FAILED);
-    outBuffer.reduce_size(mCertDataHeader.ProductAttestationIntermediateCert.length);
-    return CHIP_NO_ERROR;
+    return IdentityCertificate(2, outBuffer);
 }
 
 CHIP_ERROR FactoryDataProvider::SignWithDeviceAttestationKey(const ByteSpan & messageToSign, MutableByteSpan & outSignBuffer)
 {
-    size_t kDacPublicKeyLen = 0, kDacPrivateKeyLen = 0;
-    uint8_t kEncryptDacPrivateKey[40] = { 0 }, kDacPublicKey[70] = { 0 }, kDacPrivateKey[40] = { 0 };
-    ReturnErrorOnFailure(ReadCertDataHeader());
-    ReturnErrorCodeIf(40 < mCertDataHeader.DacPrivateKey.length, CHIP_ERROR_BUFFER_TOO_SMALL);
-    ReturnErrorCodeIf(70 < mCertDataHeader.DacPublicKey.length, CHIP_ERROR_BUFFER_TOO_SMALL);
-    ReturnErrorCodeIf(
-            kNoErr != bk_flash_read(
-                BK_PARTITION_MATTER_FACTORY_FLASH,
-                certDataHeaderOffset + mCertDataHeader.DacPrivateKey.off_set + mCertDataHeader.header_length,
-                kEncryptDacPrivateKey,
-                mCertDataHeader.DacPrivateKey.length
-                ),
-            CHIP_ERROR_READ_FAILED);
-    kDacPrivateKeyLen = mCertDataHeader.DacPrivateKey.length;
-    ReturnErrorCodeIf(
-            kNoErr != bk_flash_read(
-                BK_PARTITION_MATTER_FACTORY_FLASH,
-                certDataHeaderOffset + mCertDataHeader.DacPublicKey.off_set + mCertDataHeader.header_length,
-                kDacPublicKey,
-                mCertDataHeader.DacPublicKey.length
-                ),
-            CHIP_ERROR_READ_FAILED);
-    kDacPublicKeyLen = mCertDataHeader.DacPublicKey.length;
-#if CONFIG_BEKEN_DAC_PRIV_ENCRYPT
-    Crypto::Aes128KeyHandle key;
-    Crypto::DefaultSessionKeystore keystore;
-    Crypto::Symmetric128BitsKeyByteArray keyMaterial;
-    memcpy(&keyMaterial, AESKey, AESKeyLen);
-    keystore.CreateKey(keyMaterial, key);
-    ReturnErrorOnFailure(Crypto::AES_CTR_crypt(kEncryptDacPrivateKey, kDacPrivateKeyLen, key, AESNonce, AESNonceLen, kDacPrivateKey));
-    keystore.DestroyKey(key);
-#else
-    memcpy(kDacPrivateKey, kEncryptDacPrivateKey, kDacPrivateKeyLen);
-#endif
-    ReturnErrorCodeIf(70 == kDacPublicKeyLen, CHIP_ERROR_BUFFER_TOO_SMALL);
-
-    Crypto::P256ECDSASignature signature;
-    Crypto::P256Keypair keypair;
-
-    VerifyOrReturnError(IsSpanUsable(outSignBuffer), CHIP_ERROR_INVALID_ARGUMENT);
-    VerifyOrReturnError(IsSpanUsable(messageToSign), CHIP_ERROR_INVALID_ARGUMENT);
-    VerifyOrReturnError(outSignBuffer.size() >= signature.Capacity(), CHIP_ERROR_BUFFER_TOO_SMALL);
-
-    // In a non-exemplary implementation, the public key is not needed here. It is used here merely because
-    // Crypto::P256Keypair is only (currently) constructable from raw keys if both private/public keys are present.
-    ReturnErrorOnFailure( LoadKeypairFromRaw(ByteSpan(kDacPrivateKey, kDacPrivateKeyLen), ByteSpan(kDacPublicKey, kDacPublicKeyLen), keypair));
-    ReturnErrorOnFailure(keypair.ECDSA_sign_msg(messageToSign.data(), messageToSign.size(), signature));
-
-    return CopySpanToMutableSpan(ByteSpan{ signature.ConstBytes(), signature.Length() }, outSignBuffer);
+    return IdentitySign(messageToSign, outSignBuffer);
 }
 
 CHIP_ERROR FactoryDataProvider::GetSetupDiscriminator(uint16_t & setupDiscriminator)
@@ -454,15 +356,16 @@ CHIP_ERROR FactoryDataProvider::GetHardwareVersionString(char * buf, size_t bufS
 CHIP_ERROR FactoryDataProvider::GetRotatingDeviceIdUniqueId(MutableByteSpan & uniqueIdSpan)
 {
     ReturnErrorOnFailure(ReadFlashDataHeader());
-    ReturnErrorCodeIf(uniqueIdSpan.size() < mFlashDataHeader.RotatingDeviceIdUniqueId.length, CHIP_ERROR_BUFFER_TOO_SMALL);
-    ReturnErrorCodeIf(
-            kNoErr != bk_flash_read(
-                BK_PARTITION_MATTER_FACTORY_FLASH,
-                flashDataHeaderOffset + mFlashDataHeader.RotatingDeviceIdUniqueId.off_set + mFlashDataHeader.header_length,
-                uniqueIdSpan.data(),
-                mFlashDataHeader.RotatingDeviceIdUniqueId.length
-                ),
-            CHIP_ERROR_READ_FAILED);
+    const uint32_t length = mFlashDataHeader.RotatingDeviceIdUniqueId.length;
+    const uint32_t offset = mFlashDataHeader.RotatingDeviceIdUniqueId.off_set;
+    const uint32_t header = mFlashDataHeader.header_length;
+    ReturnErrorCodeIf(length < 16 || length > 128, CHIP_ERROR_INVALID_ARGUMENT);
+    ReturnErrorCodeIf(header > 0x1000 || offset > 0x1000 - header ||
+                      length > 0x1000 - header - offset, CHIP_ERROR_INVALID_ARGUMENT);
+    ReturnErrorCodeIf(uniqueIdSpan.size() < length, CHIP_ERROR_BUFFER_TOO_SMALL);
+    ReturnErrorCodeIf(kNoErr != bk_flash_read(BK_PARTITION_MATTER_FACTORY_FLASH,
+        flashDataHeaderOffset + offset + header, uniqueIdSpan.data(), length), CHIP_ERROR_READ_FAILED);
+    uniqueIdSpan.reduce_size(length);
     return CHIP_NO_ERROR;
 }
 

@@ -173,8 +173,8 @@ const bk_logic_partition_t bk7231_partitions_2M[BK_PARTITION_MAX] =
     {
         .partition_owner           = BK_FLASH_EMBEDDED,
         .partition_description     = "matter factory info",
-        .partition_start_addr      = 0x1fd000,// for matter factory
-        .partition_length          = 0x3000,
+        .partition_start_addr      = 0x1fe000,// batch certificate page; data page at 0x1ff000
+        .partition_length          = 0x2000,
         .partition_options         = PAR_OPT_READ_EN | PAR_OPT_WRITE_DIS,
     },
 #endif

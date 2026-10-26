@@ -189,7 +189,9 @@ CHIP_ERROR FactoryDataProviderInRAM::GetSetupDiscriminator(uint16_t & setupDiscr
     err = CHIP_NO_ERROR;
 #endif // defined(CHIP_DEVICE_CONFIG_USE_TEST_SETUP_DISCRIMINATOR) && CHIP_DEVICE_CONFIG_USE_TEST_SETUP_DISCRIMINATOR
 
+#if !BK_RDI_TEST_FIRMWARE
     val = generate_discriminator_by_mac();
+#endif
     setupDiscriminator = static_cast<uint16_t>(val);
     VerifyOrReturnLogError(setupDiscriminator <= kMaxDiscriminatorValue, CHIP_ERROR_INVALID_ARGUMENT);
 

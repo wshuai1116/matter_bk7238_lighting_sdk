@@ -39,6 +39,8 @@
 #include <setup_payload/ManualSetupPayloadGenerator.h>
 #include <setup_payload/QRCodeSetupPayloadGenerator.h>
 #include <platform/Beken/FactoryDataProvider.h>
+#include "easyflash.h"
+extern "C" EfErrCode ef_env_reset_except_rdi(void);
 #include <inet/BasicPacketFilters.h>
 
 #include <ota/OTAHelper.h>
@@ -153,7 +155,11 @@ void fast_factory_reset() {
         if (fast_count >= 3)
         {
             bk_printf("[FAST_REBOOT] count=%d trigger fast_factory_reset\r\n", fast_count);
-            bk_erase_all(BK_PARTITION_MATTER_FLASH);
+            if (ef_env_reset_except_rdi() != EF_NO_ERR)
+            {
+                ChipLogError(DeviceLayer, "Fast reset storage operation failed");
+                return;
+            }
             bk_reboot();
         } else {
             bk_printf("[FAST_REBOOT] count=%d\r\n", fast_count);

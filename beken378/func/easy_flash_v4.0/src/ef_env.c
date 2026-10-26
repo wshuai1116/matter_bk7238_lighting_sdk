@@ -507,7 +507,7 @@ static uint32_t get_next_env_addr(sector_meta_data_t sector, env_node_obj_t pre_
             addr = find_next_env_addr(addr, sector->addr + SECTOR_SIZE - SECTOR_HDR_DATA_SIZE);
 
             if (addr > sector->addr + SECTOR_SIZE || pre_env->len == 0) {
-                //TODO ÉÈÇøÁ¬ÐøÄ£Ê½
+                //TODO æ‰‡åŒºè¿žç»­æ¨¡å¼
                 return FAILED_ADDR;
             }
         } else {
@@ -542,7 +542,7 @@ static EfErrCode read_env(env_node_obj_t env)
         env->crc_is_ok = false;
         return EF_READ_ERR;
     } else if (env->len > SECTOR_SIZE - SECTOR_HDR_DATA_SIZE && env->len < ENV_AREA_SIZE) {
-        //TODO ÉÈÇøÁ¬ÐøÄ£Ê½£¬»òÕßÐ´Èë³¤¶ÈÃ»ÓÐÐ´ÈëÍêÕû
+        //TODO æ‰‡åŒºè¿žç»­æ¨¡å¼ï¼Œæˆ–è€…å†™å…¥é•¿åº¦æ²¡æœ‰å†™å…¥å®Œæ•´
         EF_ASSERT(0);
     }
 
@@ -1400,6 +1400,48 @@ EfErrCode ef_del_env(const char *key)
     return result;
 }
 
+/* Insert into EasyFlash v4 ef_env.c after ef_del_env().
+ * Keep RDI records in place throughout reset; do not erase/restore them.
+ * No GC is invoked during del_env(), so the selected node metadata stays valid. */
+static bool rdi_reset_find_key(env_node_obj_t env, void *arg1, void *arg2)
+{
+    bool *found = arg1;
+    env_node_obj_t selected = arg2;
+    if (!env->crc_is_ok || env->status != ENV_WRITE || env->name_len > sizeof(env->name)) return false;
+    if ((env->name_len == strlen("id.key.v1") && !strncmp(env->name, "id.key.v1", env->name_len)) ||
+        (env->name_len == strlen("id.done.v1") && !strncmp(env->name, "id.done.v1", env->name_len)) ||
+        (env->name_len == strlen("rdi.state.v2") &&
+         !strncmp(env->name, "rdi.state.v2", env->name_len)) ||
+        (env->name_len == strlen("rdi.uid.v1") &&
+         !strncmp(env->name, "rdi.uid.v1", env->name_len)) ||
+        (env->name_len == strlen("rdi.counter.v1") &&
+         !strncmp(env->name, "rdi.counter.v1", env->name_len))) return false;
+    *selected = *env;
+    *found = true;
+    return true;
+}
+EfErrCode ef_env_reset_except_rdi(void)
+{
+    EfErrCode result = EF_NO_ERR;
+    struct env_node_obj env, selected;
+    char key[sizeof(selected.name) + 1];
+    bool found;
+    if (!init_ok) return EF_ENV_INIT_FAILED;
+    ef_port_env_lock();
+    do {
+        found = false;
+        env_iterator(&env, &found, &selected, rdi_reset_find_key);
+        if (found) {
+            memcpy(key, selected.name, selected.name_len);
+            key[selected.name_len] = '\0';
+            result = del_env(key, &selected, true);
+        }
+    } while (found && result == EF_NO_ERR);
+    ef_port_env_unlock();
+    return result;
+}
+
+
 /**
  * The same to ef_del_env on this mode
  * It's compatibility with older versions (less then V4.0).
@@ -1722,7 +1764,7 @@ static bool check_and_recovery_env_cb(env_node_obj_t env, void *arg1, void *arg2
     } else if (env->status == ENV_PRE_WRITE) {
         uint8_t status_table[ENV_STATUS_TABLE_SIZE];
         /* the ENV has not write finish, change the status to error */
-        //TODO »æÖÆÒì³£´¦ÀíµÄ×´Ì¬×°»»Í¼
+        //TODO ç»˜åˆ¶å¼‚å¸¸å¤„ç†çš„çŠ¶æ€è£…æ¢å›¾
         write_status(env->addr.start, status_table, ENV_STATUS_NUM, ENV_ERR_HDR);
         return true;
     }

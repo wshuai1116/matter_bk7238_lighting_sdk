@@ -22,6 +22,10 @@ static_library("Beken") {
   sources = [
     "../SingletonConfigurationManager.cpp",
     "BekenConfig.cpp",
+    "BekenRdi.cpp",
+    "DeviceIdentity.cpp",
+    "bk7238_rdi.c",
+    "bk7238_rdi_native.c",
     "DiagnosticDataProviderImpl.cpp",
     "KeyValueStoreManagerImpl.cpp",
     "LwIPCoreLock.cpp",

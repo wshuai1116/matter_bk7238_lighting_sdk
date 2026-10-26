@@ -110,6 +110,7 @@ extern void net_Command(char *pcWriteBuffer, int xWriteBufferLen, int argc, char
 extern void BkApplyUpdateCmdHandler(char *pcWriteBuffer, int xWriteBufferLen, int argc, char **argv );
 extern void BkQueryImageCmdHandler(char *pcWriteBuffer, int xWriteBufferLen, int argc, char **argv );
 extern void matter_factory_reset(char *pcWriteBuffer, int xWriteBufferLen, int argc, char **argv );
+extern void matter_identity(char *, int, int, char **);
 extern void matter_show(char *pcWriteBuffer, int xWriteBufferLen, int argc, char **argv );
 extern void matter_software_reset(char *pcWriteBuffer, int xWriteBufferLen, int argc, char **argv );
 extern void matter_cli(char *pcWriteBuffer, int xWriteBufferLen, int argc, char **argv );
@@ -1908,6 +1909,10 @@ static void efuse_mac_cmd_test(char *pcWriteBuffer, int xWriteBufferLen, int arg
 
 void bkreg_cmd_handle_input(char *inbuf, int len)
 {
+#ifdef MATTER_EXAMPLE
+    /* Device-key build: do not expose arbitrary register access over UART. */
+    return;
+#endif
     if(((char)BKREG_MAGIC_WORD0 == inbuf[0])
             && ((char)BKREG_MAGIC_WORD1 == inbuf[1])
             && ((char)BKREG_MAGIC_WORD2 == inbuf[2]))
@@ -3850,6 +3855,7 @@ static const struct cli_command built_ins[] =
     {"BkNotifyUpdateApplied", "BkNotifyUpdateApplied [version]", BkNotifyUpdateApplied},
     {"matter_factory_reset", "matter_factory_reset", matter_factory_reset},
     {"matter_show", "matter_show", matter_show},
+    {"matter_identity", "device identity provisioning", matter_identity},
 #endif
 };
 #else
@@ -3931,6 +3937,7 @@ static const struct cli_command built_ins[] =
     {"bk_erase_all_test", "bk_erase_all_test ", bk_erase_all_test},
     {"matter_factory_reset", "matter_factory_reset", matter_factory_reset},
     {"matter_show", "matter_show", matter_show},
+    {"matter_identity", "device identity provisioning", matter_identity},
     {"matter_software_reset", "matter_software_reset", matter_software_reset},
     {"matter", "matter cli", matter_cli},
 //#endif
@@ -3977,6 +3984,14 @@ void help_command(char *pcWriteBuffer, int xWriteBufferLen, int argc, char **arg
 
 int cli_register_command(const struct cli_command *command)
 {
+#ifdef MATTER_EXAMPLE
+    /* Minimal production CLI: no RAM/Flash/ENV read/write bypass. */
+    if (command && command->name && strcmp(command->name,"help") &&
+        strcmp(command->name,"version") && strcmp(command->name,"echo") &&
+        strcmp(command->name,"mac") && strcmp(command->name,"reboot") &&
+        strcmp(command->name,"matter_show") && strcmp(command->name,"matter_identity") &&
+        strcmp(command->name,"matter_factory_reset")) return 0;
+#endif
     int i;
     if (!command->name || !command->function)
         return 1;

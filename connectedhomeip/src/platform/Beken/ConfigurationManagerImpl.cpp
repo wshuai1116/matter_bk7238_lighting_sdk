@@ -36,6 +36,8 @@
 #include "ef_def.h"
 #include "wlan_ui_pub.h"
 
+extern "C" EfErrCode ef_env_reset_except_rdi(void);
+
 namespace chip {
 namespace DeviceLayer {
 
@@ -337,11 +339,14 @@ void ConfigurationManagerImpl::DoFactoryReset(intptr_t arg)
     ChipLogDetail(DeviceLayer, "sw_ver %ld,old_sw_ver %ld,version_str %s,old_version_str %s",
                    sw_ver ,old_sw_ver,version_str,old_version_str);
 
-    bk_logic_partition_t * logic_partition = bk_flash_get_info(BK_PARTITION_MATTER_FLASH);
-    bk_flash_erase(BK_PARTITION_MATTER_FLASH, 0, logic_partition->partition_length);
-
 #if CFG_EASY_FLASH
-    ef_env_set_default();
+    // Delete Matter state in place. RDI UID/counter survive even if power is
+    // lost during reset; never erase the whole ENV then restore from RAM.
+    if (ef_env_reset_except_rdi() != EF_NO_ERR)
+    {
+        ChipLogError(DeviceLayer, "Factory reset storage operation failed");
+        return;
+    }
 #endif
 
     BekenConfig::WriteConfigValue(BekenConfig::kConfigKey_SoftwareVersion, sw_ver);

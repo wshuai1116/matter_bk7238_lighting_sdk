@@ -68,6 +68,8 @@ INCLUDES += -I$(CHIP_DIR)/src/platform/Beken/bk7231
 # CHIP compile options
 # -------------------------------------------------------------------
 CFLAGS =
+RDI_TEST_FIRMWARE ?= 0
+CFLAGS += -DBK_RDI_TEST_FIRMWARE=$(RDI_TEST_FIRMWARE)
 CXXFLAGS =
 
 CXXFLAGS = -mthumb -mcpu=arm968e-s -mthumb-interwork -mlittle-endian -march=armv5te
@@ -138,6 +140,8 @@ CHIP_CORE:
 	@echo chip_progress_logging = true 	>> $(OUTPUT_DIR)/args.gn
 	@echo chip_detail_logging = false	>> $(OUTPUT_DIR)/args.gn
 	@echo chip_automation_logging = false	>> $(OUTPUT_DIR)/args.gn
+	@echo chip_enable_rotating_device_id = true >> $(OUTPUT_DIR)/args.gn
+	@echo chip_enable_additional_data_advertising = true >> $(OUTPUT_DIR)/args.gn
 	@echo target_os = \"freertos\" 		>> $(OUTPUT_DIR)/args.gn
 	@echo beken_ar = \"${AR}\"    >> $(OUTPUT_DIR)/args.gn
 	@echo beken_cc = \"${CC}\"   >> $(OUTPUT_DIR)/args.gn
